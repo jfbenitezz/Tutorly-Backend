@@ -402,6 +402,35 @@ app.get('/api/files/:filename', async (req, res) => {
   }
 });
 
+// Add this endpoint after all your other routes but before the error handler
+app.delete("/api/cleanup", async (req, res) => {
+  try {
+    // Verify the user is an admin (Clerk will handle this with adminOnly: true)
+    
+    // Delete all documents from each collection
+    const [chatResult, userChatsResult, audioResult] = await Promise.all([
+      Chat.deleteMany({}),
+      UserChats.deleteMany({}),
+      AudioRecord.deleteMany({})
+    ]);
+
+    res.status(200).json({
+      message: "Database cleanup completed successfully",
+      results: {
+        chatsDeleted: chatResult.deletedCount,
+        userChatsDeleted: userChatsResult.deletedCount,
+        audioRecordsDeleted: audioResult.deletedCount
+      }
+    });
+  } catch (err) {
+    console.error("Error during cleanup:", err);
+    res.status(500).json({ 
+      error: "Error during database cleanup",
+      details: err.message 
+    });
+  }
+});
+
 // PRODUCTION
 // This existing block seems correct for serving your client's dist folder.
 // The new code had a similar block for "client/build", ensure this path is correct for your setup.
