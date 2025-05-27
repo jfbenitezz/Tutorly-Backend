@@ -13,6 +13,7 @@ import axios from "axios"; // Added
 import multer from "multer"; // Added
 import fs from "fs"; // Added
 import FormData from "form-data"; // Added, in case FormData is not global
+import AudioRecord from "./models/audioRecord.js"; // Add this at the top
 
 const port = process.env.PORT || 3000;
 const app = express();
@@ -212,6 +213,7 @@ app.put("/api/chats/:id", ClerkExpressRequireAuth(), async (req, res) => {
 // Rutas proxy para el servidor de transcripción (Added)
 // 1. Subir audio
 app.post("/api/audio/upload", ClerkExpressRequireAuth(), upload.single("file"), async (req, res) => { // Cambiado de "audio" a "file"
+  const userId = req.auth.userId; // From Clerk
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No se proporcionó ningún archivo" });
@@ -227,6 +229,15 @@ app.post("/api/audio/upload", ClerkExpressRequireAuth(), upload.single("file"), 
         ...formData.getHeaders(), // Important for multipart/form-data with form-data library
       },
     });
+
+      // Save the audio metadata in MongoDB
+      await AudioRecord.create({
+        audioId: response.data.audio_id, // depends on what FastAPI returns
+        userId,
+        filename: req.file.filename,
+        originalName: req.file.originalname,
+        status: "uploaded",
+      });
 
     // Clean up the uploaded file after forwarding
     fs.unlink(req.file.path, (err) => {
@@ -293,7 +304,10 @@ app.post("/api/audio/transcribe/:audioId", ClerkExpressRequireAuth(), async (req
 
     // ENVÍA UN CUERPO VACÍO AL SERVICIO DE TRANSCRIPCIÓN
     const response = await axios.post(transcriptionServiceUrl, {}); 
-
+    await AudioRecord.findOneAndUpdate(
+      { audioId },
+      { status: "transcribed", lastUpdated: new Date(), transcriptionResult: response.data },
+    );
     res.status(response.status).json(response.data);
   } catch (error) {
     console.error("Error al transcribir el audio:", error.response ? error.response.data : error.message);
@@ -314,6 +328,30 @@ app.delete("/api/audio/cleanup/:audioId", ClerkExpressRequireAuth(), async (req,
     res.status(500).json({ error: "Error al limpiar el audio", details: error.message });
   }
 });
+
+app.get("/api/audio/list", ClerkExpressRequireAuth(), async (req, res) => {
+  try {
+    const userId = req.auth.userId;
+    const records = await AudioRecord.find({ userId }).sort({ createdAt: -1 });
+    res.json(records);
+  } catch (error) {
+    res.status(500).json({ error: "Error fetching audio records", details: error.message });
+  }
+});
+
+app.get("/api/audio/:audioId/transcription", ClerkExpressRequireAuth(), async (req, res) => {
+  try {
+    const { audioId } = req.params;
+    const record = await AudioRecord.findOne({ audioId }, { transcriptionResult: 1 });
+    if (!record) {
+      return res.status(404).json({ error: "Audio record not found" });
+    }
+    res.json(record.transcriptionResult);
+  } catch (error) {
+    res.status(500).json({ error: "Error fetching audio transcription", details: error.message });
+  }
+})
+
 // End of Added audio routes
 
 app.use((err, req, res, next) => {
@@ -325,6 +363,7 @@ app.use((err, req, res, next) => {
   // For other errors, you might want a generic 500
   res.status(500).send("Something broke!");
 });
+
 
 // PRODUCTION
 // This existing block seems correct for serving your client's dist folder.
