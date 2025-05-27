@@ -321,8 +321,18 @@ app.post("/api/audio/transcribe/:audioId", ClerkExpressRequireAuth(), async (req
 app.delete("/api/audio/cleanup/:audioId", ClerkExpressRequireAuth(), async (req, res) => {
   try {
     const { audioId } = req.params;
+    
+    // Call the external cleanup service
     const response = await axios.delete(`${TRANSCRIPTION_SERVER_URL}/cleanup/${audioId}`);
-    res.json(response.data);
+    
+    // Remove the audio record from MongoDB
+    const deleteResult = await AudioRecord.deleteOne({ audioId });
+    
+    if (deleteResult.deletedCount === 0) {
+      return res.status(404).json({ error: "Audio record not found" });
+    }
+
+    res.json({ message: "Audio cleaned up successfully", details: response.data });
   } catch (error) {
     console.error("Error al limpiar el audio:", error.response ? error.response.data : error.message);
     res.status(500).json({ error: "Error al limpiar el audio", details: error.message });
@@ -364,6 +374,33 @@ app.use((err, req, res, next) => {
   res.status(500).send("Something broke!");
 });
 
+
+const FASTAPI_BASE_URL = 'http://localhost:9000';
+
+app.get('/api/files', async (req, res) => {
+  try {
+    const response = await axios.get(`${FASTAPI_BASE_URL}/list_files/`);
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error fetching files:', error.message);
+    res.status(500).json({ error: 'Error connecting to FastAPI' });
+  }
+});
+
+app.get('/api/files/:filename', async (req, res) => {
+  const { filename } = req.params;
+  try {
+    const response = await axios.get(`${FASTAPI_BASE_URL}/get_file/${filename}`, {
+      responseType: 'stream',
+    });
+
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Error downloading file:', error.message);
+    res.status(500).json({ error: 'Error downloading file from FastAPI' });
+  }
+});
 
 // PRODUCTION
 // This existing block seems correct for serving your client's dist folder.
