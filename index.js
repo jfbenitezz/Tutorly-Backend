@@ -27,28 +27,21 @@ const VECTOR_DB_URL = process.env.DB_BASE_URL || "http://localhost:9000";
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: process.env.CLIENT_URL || "http://localhost:5173",
     credentials: true,
   })
 );
 
 app.use(express.json());
 
-// Configuración de multer para subida de archivos
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, "uploads");
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
-  },
+// Configuración de multer para Vercel (serverless)
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB límite
+  }
 });
-
-const upload = multer({ storage }); // Added
 
 const connect = async () => {
   try {
@@ -218,12 +211,13 @@ app.post("/api/audio/upload", ClerkExpressRequireAuth(), upload.single("file"), 
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No se proporcionó ningún archivo" });
-    }
-
-    const formData = new FormData();
+    }    const formData = new FormData();
     // Cuando reenvías al servidor de transcripción, asegúrate de que el nombre del campo
     // ("file" aquí) coincida con lo que espera el endpoint /upload de FastAPI.
-    formData.append("file", fs.createReadStream(req.file.path), req.file.originalname);
+    formData.append("file", req.file.buffer, {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype
+    });
 
     const response = await axios.post(`${TRANSCRIPTION_SERVER_URL}/upload`, formData, {
       headers: {
@@ -235,25 +229,12 @@ app.post("/api/audio/upload", ClerkExpressRequireAuth(), upload.single("file"), 
       await AudioRecord.create({
         audioId: response.data.audio_id, // depends on what FastAPI returns
         userId,
-        filename: req.file.filename,
+        filename: req.file.originalname, // Ya no hay filename generado
         originalName: req.file.originalname,
-        status: "uploaded",
-      });
+        status: "uploaded",      });
 
-    // Clean up the uploaded file after forwarding
-    fs.unlink(req.file.path, (err) => {
-        if (err) console.error("Error deleting uploaded file:", err);
-    });
-
-    res.json(response.data);
-  } catch (error) {
+    res.json(response.data);  } catch (error) {
     console.error("Error al subir el audio (ruta /api/audio/upload):", error.response ? error.response.data : error.message);
-    // Clean up the uploaded file in case of an error too
-    if (req.file && req.file.path) {
-        fs.unlink(req.file.path, (errUnlink) => { // Usar un nombre de variable diferente para el error de unlink
-            if (errUnlink) console.error("Error deleting uploaded file after error:", errUnlink);
-        });
-    }
     // Devuelve el error específico de la ruta en lugar de dejar que caiga al manejador global
     // para dar más contexto si es posible.
     const status = error.response ? error.response.status : 500;
@@ -408,7 +389,10 @@ app.post('/api/generar_esquema', ClerkExpressRequireAuth(), upload.single('file'
     return res.status(400).send('No file uploaded');
   }
   const form = new FormData();
-  form.append('file', fs.createReadStream(req.file.path), req.file.originalname);
+  form.append('file', req.file.buffer, {
+    filename: req.file.originalname,
+    contentType: req.file.mimetype
+  });
 
   try {
     const response = await axios.post(
@@ -424,10 +408,6 @@ app.post('/api/generar_esquema', ClerkExpressRequireAuth(), upload.single('file'
   } catch (error) {
     console.error('Error generating schema:', error.response ? error.response.data : error.message);
     res.status(error.response?.status || 500).json({ error: 'Error generating schema from FastAPI', details: error.message });
-  } finally {
-    fs.unlink(req.file.path, (err) => {
-      if (err) console.error('Error deleting uploaded file for schema generation:', err);
-    });
   }
 });
 
@@ -440,12 +420,17 @@ app.post('/api/generar_apuntes', ClerkExpressRequireAuth(), upload.fields([
   if (!files || !files['transcripcion_file'] || !files['esquema_file']) {
     return res.status(400).send('Missing files. Both transcripcion_file and esquema_file are required.');
   }
-
   const transcripcionFile = files['transcripcion_file'][0];
   const esquemaFile = files['esquema_file'][0];
   const form = new FormData();
-  form.append('transcripcion_file', fs.createReadStream(transcripcionFile.path), transcripcionFile.originalname);
-  form.append('esquema_file', fs.createReadStream(esquemaFile.path), esquemaFile.originalname);
+  form.append('transcripcion_file', transcripcionFile.buffer, {
+    filename: transcripcionFile.originalname,
+    contentType: transcripcionFile.mimetype
+  });
+  form.append('esquema_file', esquemaFile.buffer, {
+    filename: esquemaFile.originalname,
+    contentType: esquemaFile.mimetype
+  });
 
   try {
     const response = await axios.post(
@@ -454,20 +439,12 @@ app.post('/api/generar_apuntes', ClerkExpressRequireAuth(), upload.fields([
       { 
         headers: form.getHeaders(),
         responseType: 'stream' 
-      }
-    );
+      }    );
     res.setHeader('Content-Disposition', response.headers['content-disposition'] || `attachment; filename="apuntes.md"`);
     response.data.pipe(res);
   } catch (error) {
     console.error('Error generating notes:', error.response ? error.response.data : error.message);
     res.status(error.response?.status || 500).json({ error: 'Error generating notes from FastAPI', details: error.message });
-  } finally {
-    fs.unlink(transcripcionFile.path, (err) => {
-      if (err) console.error('Error deleting uploaded transcripcion_file for notes generation:', err);
-    });
-    fs.unlink(esquemaFile.path, (err) => {
-      if (err) console.error('Error deleting uploaded esquema_file for notes generation:', err);
-    });
   }
 });
 
@@ -480,12 +457,17 @@ app.post('/api/generar_apuntes_gemini', ClerkExpressRequireAuth(), upload.fields
   if (!files || !files['esquema_file'] || !files['transcripcion_file']) {
     return res.status(400).send('Missing files. Both esquema_file and transcripcion_file are required.');
   }
-
   const esquemaFile = files['esquema_file'][0];
   const transcripcionFile = files['transcripcion_file'][0];
   const form = new FormData();
-  form.append('esquema_file', fs.createReadStream(esquemaFile.path), esquemaFile.originalname);
-  form.append('transcripcion_file', fs.createReadStream(transcripcionFile.path), transcripcionFile.originalname);
+  form.append('esquema_file', esquemaFile.buffer, {
+    filename: esquemaFile.originalname,
+    contentType: esquemaFile.mimetype
+  });
+  form.append('transcripcion_file', transcripcionFile.buffer, {
+    filename: transcripcionFile.originalname,
+    contentType: transcripcionFile.mimetype
+  });
 
   try {
     const response = await axios.post(
@@ -494,22 +476,16 @@ app.post('/api/generar_apuntes_gemini', ClerkExpressRequireAuth(), upload.fields
       { 
         headers: form.getHeaders(),
         responseType: 'stream' 
-      }
-    );
+      }    );
     res.setHeader('Content-Disposition', response.headers['content-disposition'] || `attachment; filename="apuntes_gemini.md"`);
     response.data.pipe(res);
   } catch (error) {
     console.error('Error generating Gemini notes:', error.response ? error.response.data : error.message);
     res.status(error.response?.status || 500).json({ error: 'Error generating Gemini notes from FastAPI', details: error.message });
-  } finally {
-    fs.unlink(esquemaFile.path, (err) => {
-      if (err) console.error('Error deleting uploaded esquema_file for Gemini notes:', err);
-    });
-    fs.unlink(transcripcionFile.path, (err) => {
-      if (err) console.error('Error deleting uploaded transcripcion_file for Gemini notes:', err);
-    });
   }
 });
+
+// End LLM module endpoints
 
 // End LLM module endpoints
 
@@ -546,35 +522,26 @@ app.post("/api/vector-db/upload-pdf", ClerkExpressRequireAuth(), upload.single("
   if (!VECTOR_DB_URL) {
     console.error("VECTOR_DB_URL is not defined in .env file.");
     return res.status(500).json({ error: "Service configuration error: VECTOR_DB_URL is missing." });
-  }
-  try {
+  }  try {
     if (!req.file) {
       return res.status(400).json({ error: "No PDF file provided." });
     }
     const formData = new FormData();
     // El endpoint Python espera el campo "file" según el código FastAPI
-    formData.append("file", fs.createReadStream(req.file.path), req.file.originalname);
+    formData.append("file", req.file.buffer, {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype
+    });
   
     const response = await axios.post(`${VECTOR_DB_URL}/upload-pdf/`, formData, {
       headers: {
         ...formData.getHeaders(),
       },
     });
-    // Limpiar el archivo temporal
-    fs.unlink(req.file.path, (err) => {
-      if (err) console.error("Error deleting temporary PDF file:", err);
-    });
 
     res.status(response.status).json(response.data);
   } catch (error) {
     console.error("Error uploading PDF to vector DB:", error.response ? error.response.data : error.message);
-    
-    // Limpiar archivo temporal en caso de error
-    if (req.file && req.file.path) {
-      fs.unlink(req.file.path, (unlinkErr) => {
-        if (unlinkErr) console.error("Error deleting temporary PDF file after error:", unlinkErr);
-      });
-    }
     
     const status = error.response ? error.response.status : 500;
     const data = error.response ? error.response.data : { error: "Error processing PDF upload.", details: error.message };
