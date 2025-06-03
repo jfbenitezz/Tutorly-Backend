@@ -566,16 +566,34 @@ app.post("/api/vector-db/empty-collection", ClerkExpressRequireAuth(), async (re
   }
 });
 
-// PRODUCTION
-// This existing block seems correct for serving your client's dist folder.
-// The new code had a similar block for "client/build", ensure this path is correct for your setup.
-if (process.env.NODE_ENV !== "development") { // Or use: process.env.NODE_ENV === "production"
-    app.use(express.static(path.join(__dirname, "../client/dist")));
+app.get("/", (req, res) => {
+  res.json({ 
+    message: "Tutorly Backend API is running",
+    status: "OK",
+    mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
+    timestamp: new Date().toISOString()
+  });
+});
 
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "../client/dist", "index.html"));
-    });
-}
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    message: "API Health Check",
+    status: "OK",
+    mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
+    timestamp: new Date().toISOString()
+  });
+});
+
+// // PRODUCTION
+// // This existing block seems correct for serving your client's dist folder.
+// // The new code had a similar block for "client/build", ensure this path is correct for your setup.
+// if (process.env.NODE_ENV !== "development") { // Or use: process.env.NODE_ENV === "production"
+//     app.use(express.static(path.join(__dirname, "../client/dist")));
+
+//     app.get("*", (req, res) => {
+//       res.sendFile(path.join(__dirname, "../client/dist", "index.html"));
+//     });
+// }
 
 
 app.listen(port, () => {
