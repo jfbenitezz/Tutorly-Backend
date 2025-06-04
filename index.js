@@ -670,6 +670,15 @@ app.put('/api/guias/:filename/contenido', ClerkExpressRequireAuth(), async (req,
   }
 });
 
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    message: "API Health Check",
+    status: "OK",
+    mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
+    timestamp: new Date().toISOString()
+  });
+});
+
 // // PRODUCTION
 // // This existing block seems correct for serving your client's dist folder.
 // // The new code had a similar block for "client/build", ensure this path is correct for your setup.
