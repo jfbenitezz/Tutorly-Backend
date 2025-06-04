@@ -431,6 +431,36 @@ app.post('/api/generar_esquema', ClerkExpressRequireAuth(), upload.single('file'
   }
 });
 
+// Endpoint: POST /api/generar_esquema_gemini
+app.post('/api/generar_esquema_gemini', ClerkExpressRequireAuth(), upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).send('No file uploaded');
+  }
+  const form = new FormData();
+  form.append('file', fs.createReadStream(req.file.path), req.file.originalname);
+
+  try {
+    const response = await axios.post(
+      `${FASTAPI_BASE_URL}/generar_esquema_gemini/`,
+      form,
+      { 
+        headers: form.getHeaders(),
+        responseType: 'stream' 
+      }
+    );
+    // Adjust filename to indicate it's a Gemini-generated schema
+    res.setHeader('Content-Disposition', response.headers['content-disposition'] || `attachment; filename="${req.file.originalname.replace(/\.txt$/i, '_esquema_gemini.txt')}"`);
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Error generating Gemini schema:', error.response ? error.response.data : error.message);
+    res.status(error.response?.status || 500).json({ error: 'Error generating Gemini schema from FastAPI', details: error.message });
+  } finally {
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.error('Error deleting uploaded file for Gemini schema generation:', err);
+    });
+  }
+});
+
 // Endpoint: POST /api/generar_apuntes
 app.post('/api/generar_apuntes', ClerkExpressRequireAuth(), upload.fields([
   { name: 'transcripcion_file', maxCount: 1 },
@@ -596,6 +626,44 @@ app.post("/api/vector-db/empty-collection", ClerkExpressRequireAuth(), async (re
     const status = error.response ? error.response.status : 500;
     const data = error.response ? error.response.data : { error: "Error communicating with vector DB service.", details: error.message };
     res.status(status).json(data);
+  }
+});
+
+// Endpoint: PUT /api/guias/:filename/contenido
+app.put('/api/guias/:filename/contenido', ClerkExpressRequireAuth(), async (req, res) => {
+  const { filename } = req.params;
+  const { contenido } = req.body; // Assuming the frontend sends { "contenido": "new text..." }
+
+  if (!contenido) {
+    return res.status(400).json({ error: 'Missing "contenido" in request body.' });
+  }
+
+  if (!filename) {
+    return res.status(400).json({ error: 'Missing filename in URL path.' });
+  }
+
+  // Basic validation for filename to prevent path traversal, similar to FastAPI
+  if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+    return res.status(400).json({ error: 'Invalid filename.' });
+  }
+
+  try {
+    const response = await axios.put(
+      `${FASTAPI_BASE_URL}/guias/${filename}/contenido`,
+      { contenido }, // FastAPI expects an object like {"contenido": "..."}
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    console.error(`Error updating guide content for ${filename}:`, error.response ? error.response.data : error.message);
+    res.status(error.response?.status || 500).json({ 
+      error: `Error updating guide content for ${filename} from FastAPI`, 
+      details: error.response?.data || error.message 
+    });
   }
 });
 
