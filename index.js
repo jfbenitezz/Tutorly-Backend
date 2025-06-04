@@ -27,7 +27,10 @@ const VECTOR_DB_URL = process.env.DB_BASE_URL || "http://localhost:9000";
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: [
+      "http://localhost:5173",
+       process.env.CLIENT_URL
+    ],
     credentials: true,
   })
 );
