@@ -43,12 +43,24 @@ const upload = multer({
   }
 });
 
+let isConnected = false;
+
 const connect = async () => {
+  if (isConnected) return;
+  
   try {
-    await mongoose.connect(process.env.MONGO);
+    await mongoose.connect(process.env.MONGO, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 10000,
+      connectTimeoutMS: 10000,
+      bufferMaxEntries: 0,
+      bufferCommands: false,
+    });
+    isConnected = true;
     console.log("Connected to MongoDB");
   } catch (err) {
-    console.log(err);
+    console.log("MongoDB connection error:", err);
+    throw err;
   }
 };
 
